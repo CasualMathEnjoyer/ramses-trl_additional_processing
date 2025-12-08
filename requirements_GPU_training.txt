@@ -1,8 +1,10 @@
 # GPU-enabled requirements for ramses-trl training
-# Updated for CUDA 12.6 compatibility
+# Updated for CUDA 12.4.1 compatibility (cluster: cuda/12.4.1)
+# TensorFlow 2.15.1 requires CUDA 12.3+ and cuDNN 8.9.7+
+# CUDA 12.4.1 is backward compatible with CUDA 12.3
 # Based on ramses-trl/requirements.txt with GPU-compatible versions
 
-# Core ML/DL packages - updated for CUDA 12.6 support
+# Core ML/DL packages - updated for CUDA 12.4+ support
 tensorflow>=2.15.0,<2.18.0
 tensorflow-estimator>=2.15.0,<2.18.0
 keras>=2.15.0,<2.18.0
@@ -13,9 +15,9 @@ scipy>=1.10.0,<2.0.0
 h5py>=3.8.0
 
 # Data processing
-pandas>=1.5.0
-matplotlib>=3.6.0
-Pillow>=9.0.0
+# pandas>=1.5.0  # Removed: requires newer compiler (GCC 4.8.5 too old), not used in training
+matplotlib>=3.6.0  # Used in submodule (may install from pre-built wheel)
+Pillow>=9.0.0  # Used in submodule (should install from pre-built wheel)
 
 # TensorFlow utilities
 tensorboard>=2.15.0
