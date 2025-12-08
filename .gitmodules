@@ -1,0 +1,3 @@
+[submodule "ramses-trl"]
+	path = ramses-trl
+	url = https://gitlab2.cnam.fr/rosmorse/ramses-trl.git
