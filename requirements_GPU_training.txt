@@ -57,6 +57,9 @@ Werkzeug>=2.2.0
 wrapt>=1.14.0
 zipp>=3.11.0
 
+# Build dependencies
+Cython>=0.29.0  # Required for building h5py from source
+
 # Optional but recommended for GPU training
 setuptools>=65.0.0
 wheel>=0.38.0
