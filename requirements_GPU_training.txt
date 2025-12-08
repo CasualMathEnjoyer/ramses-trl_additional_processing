@@ -12,7 +12,8 @@ keras>=2.15.0,<2.18.0
 # Numerical computing - updated for TensorFlow 2.15+ compatibility
 numpy>=1.24.0,<2.0.0
 scipy>=1.10.0,<2.0.0
-h5py>=2.10.0,<3.0.0  # Limited to <3.0.0 for HDF5 1.8.x compatibility (cluster has HDF5 1.8.12)
+# h5py>=2.10.0,<3.0.0  # INSTALLED VIA CONDA: conda install -c conda-forge "h5py>=2.10" --yes
+# Limited to <3.0.0 for HDF5 1.8.x compatibility (cluster has HDF5 1.8.12)
 
 # Data processing
 # pandas>=1.5.0  # Removed: requires newer compiler (GCC 4.8.5 too old), not used in training
