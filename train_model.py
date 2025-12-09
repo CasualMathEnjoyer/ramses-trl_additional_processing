@@ -50,7 +50,7 @@ def train_model(src_train, tgt_train, src_val, tgt_val, output_model):
         output_model: Path pattern for output model file (can include {epoch}, {val_softmax_acc}, {val_softmax_loss})
     """
     hidden = 500
-    batch_size = 32
+    batch_size = 16
     num_epochs = 200
     period = 20
     
