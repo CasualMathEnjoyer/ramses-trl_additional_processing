@@ -16,6 +16,8 @@ Takes source and target files as command-line arguments.
 import sys
 import os
 import argparse
+import glob
+import re
 
 import keras
 import tensorflow as tf
@@ -97,7 +99,17 @@ def train_model(src_train, tgt_train, src_val, tgt_val, output_model):
         try:
             model = keras.models.load_model(best_model_path)
             print(f"Loaded existing model from: {best_model_path}")
-            initial_epoch = getattr(model, 'epoch', 0) if hasattr(model, 'epoch') else 0
+            
+            checkpoint_files = glob.glob(os.path.join(checkpoint_dir, 'checkpoint-epoch*.h5'))
+            if checkpoint_files:
+                epochs = []
+                for f in checkpoint_files:
+                    match = re.search(r'epoch(\d+)', f)
+                    if match:
+                        epochs.append(int(match.group(1)))
+                if epochs:
+                    initial_epoch = max(epochs)
+                    print(f"Found checkpoints up to epoch {initial_epoch}, resuming from epoch {initial_epoch}")
         except Exception as e:
             print(f"Could not load existing model ({e}), starting fresh...")
             model = model_generator()
