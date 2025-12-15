@@ -35,9 +35,97 @@ if hasattr(keras.layers, 'Input') and not hasattr(keras.models, 'Input'):
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'ramses-trl', 'python'))
 from translit_lib.vocabulary import Vocabulary
-from translit_lib.corpus_utils import CorpusSegmentation
+from translit_lib.corpus_utils import CorpusSegmentation, _load_character_corpus
 from translit_lib.encoder_decoder import EncoderDecoderBidiSegmentation
 from keras.callbacks import ModelCheckpoint, Callback
+
+
+def calculate_max_unicode_code(target_file):
+    """
+    Calculate the maximum Unicode code point in the target file.
+    Returns the max code point with a small buffer.
+    """
+    max_code = 0
+    with open(target_file, 'r', encoding='utf-8') as f:
+        for line in f:
+            for char in line:
+                code = ord(char)
+                if code > max_code:
+                    max_code = code
+    buffer = 100
+    return max_code + buffer
+
+
+def patch_corpus_utils_for_unicode(max_code):
+    """
+    Monkey-patch the corpus_utils module to use a higher max_code for Unicode support.
+    """
+    import translit_lib.corpus_utils as corpus_utils
+    
+    original_load_character_corpus = corpus_utils._load_character_corpus
+    
+    def patched_load_character_corpus(file_name, max_code_param=None, space_separated=True):
+        if max_code_param is None:
+            max_code_param = max_code
+        return original_load_character_corpus(file_name, max_code=max_code_param, space_separated=space_separated)
+    
+    corpus_utils._load_character_corpus = patched_load_character_corpus
+    
+    original_encode_segmented_corpus = corpus_utils._encode_segmented_corpus
+    
+    def patched_encode_segmented_corpus(encoded_inputs, encoded_outputs, segmentation, num_input_classes, num_output_classes):
+        if num_output_classes == 256:
+            num_output_classes = max_code + 1
+        return original_encode_segmented_corpus(encoded_inputs, encoded_outputs, segmentation, num_input_classes, num_output_classes)
+    
+    corpus_utils._encode_segmented_corpus = patched_encode_segmented_corpus
+    
+    original_corpus_segmentation_no_batch = CorpusSegmentation.no_batch
+    
+    def patched_no_batch(self):
+        list_in = self._build_list_in()
+        segment_out = self._load_segment_out()
+        list_out = self._load_target_corpus()
+        return corpus_utils._encode_segmented_corpus(
+            list_in, list_out, segment_out,
+            self.vocabulary().size(), max_code + 1
+        )
+    
+    CorpusSegmentation.no_batch = patched_no_batch
+    
+    original_corpus_segmentation_generator = CorpusSegmentation.generator
+    
+    def patched_generator(self, epochs):
+        import operator
+        import random
+        def _mygenerator():
+            def extract(a_list, indexes):
+                return operator.itemgetter(*indexes)(a_list)
+            list_in = self._build_list_in()
+            list_out = self._load_target_corpus()
+            seg_out = self._load_segment_out()
+            epoch_count = 0
+            while True:
+                indexes = list(range(0, self.corpus_size()))
+                random.shuffle(indexes)
+                for i in range(0, self.corpus_size(), self.batch_size()):
+                    batch_indexes = indexes[i:i + self.batch_size()]
+                    batch_in = extract(list_in, batch_indexes)
+                    batch_out = extract(list_out, batch_indexes)
+                    batch_out_seg = extract(seg_out, batch_indexes)
+                    res = corpus_utils._encode_segmented_corpus(
+                        batch_in, batch_out, batch_out_seg,
+                        self.vocabulary().size(), 
+                        max_code + 1
+                    )
+                    yield res
+                if epochs is not None and epoch_count >= epochs:
+                    break
+                else:
+                    epoch_count = epoch_count + 1
+        return _mygenerator()
+    
+    CorpusSegmentation.generator = patched_generator
 
 
 def train_model(src_train, tgt_train, src_val, tgt_val, output_model):
@@ -72,6 +160,17 @@ def train_model(src_train, tgt_train, src_val, tgt_val, output_model):
         print(f"Error: Target validation file not found: {tgt_val}", file=sys.stderr)
         sys.exit(1)
 
+    print("Calculating maximum Unicode code point from target file...")
+    max_code = calculate_max_unicode_code(tgt_train)
+    print(f"Maximum Unicode code point: {max_code} (U+{max_code:04X})")
+    print(f"Using max_code={max_code} for Unicode support (default was 255)")
+    
+    print("Patching corpus_utils for Unicode support...")
+    patch_corpus_utils_for_unicode(max_code)
+    
+    decoder_output_size = max_code + 1
+    print(f"Decoder output size: {decoder_output_size} (supports Unicode codes 0-{max_code})")
+
     corpus = CorpusSegmentation(vocabulary=vocabulary, src=src_train, tgt=tgt_train, batch_size=batch_size)
     corpus_val = CorpusSegmentation(vocabulary=vocabulary, src=src_val, tgt=tgt_val, batch_size=batch_size)
 
@@ -79,7 +178,7 @@ def train_model(src_train, tgt_train, src_val, tgt_val, output_model):
         encoder_decoder_seg = EncoderDecoderBidiSegmentation(
             hidden=hidden, 
             encoder_input_size=vocabulary.size(), 
-            decoder_input_size=256
+            decoder_input_size=decoder_output_size
         )
         model = encoder_decoder_seg.build_model()
         model.summary()
