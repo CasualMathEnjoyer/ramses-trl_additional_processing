@@ -4,7 +4,7 @@
 #PBS -l walltime=24:00:00
 #PBS -q gpu
 #PBS -j oe
-#PBS -l select=1:mem=32G:ncpus=8:ngpus=1
+#PBS -l select=1:mem=48G:ncpus=8:ngpus=1
 
 cd $PBS_O_WORKDIR
 
