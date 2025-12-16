@@ -36,8 +36,9 @@ if hasattr(keras.layers, 'Input') and not hasattr(keras.models, 'Input'):
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'ramses-trl', 'python'))
 from translit_lib.vocabulary import Vocabulary
 from translit_lib.corpus_utils import CorpusSegmentation, _load_character_corpus
+import translit_lib.corpus_utils as corpus_utils
 from translit_lib.encoder_decoder import EncoderDecoderBidiSegmentation
-from keras.callbacks import ModelCheckpoint, Callback
+from keras.callbacks import ModelCheckpoint, Callback, EarlyStopping
 
 
 def calculate_max_unicode_code(target_file):
@@ -235,6 +236,12 @@ def train_model(src_train, tgt_train, src_val, tgt_val, output_model):
             monitor='val_loss',
             save_best_only=True,
             save_weights_only=False
+        ),
+        EarlyStopping(
+            monitor='val_loss',
+            patience=10,
+            verbose=1,
+            restore_best_weights=True
         )
     ]
     
@@ -250,11 +257,39 @@ def train_model(src_train, tgt_train, src_val, tgt_val, output_model):
     
     corpus_generator = corpus.generator(num_epochs)
     
+    val_batch_size = min(corpus_val.batch_size(), 8)
+    
+    def validation_generator():
+        """Generator for validation data that processes in batches to avoid OOM"""
+        import operator
+        list_in = corpus_val._build_list_in()
+        list_out = corpus_val._load_target_corpus()
+        seg_out = corpus_val._load_segment_out()
+        
+        def extract(a_list, indexes):
+            return operator.itemgetter(*indexes)(a_list)
+        
+        val_size = corpus_val.corpus_size()
+        
+        for i in range(0, val_size, val_batch_size):
+            batch_indexes = list(range(i, min(i + val_batch_size, val_size)))
+            batch_in = extract(list_in, batch_indexes)
+            batch_out = extract(list_out, batch_indexes)
+            batch_out_seg = extract(seg_out, batch_indexes)
+            res = corpus_utils._encode_segmented_corpus(
+                batch_in, batch_out, batch_out_seg,
+                corpus_val.vocabulary().size(), max_code + 1
+            )
+            yield res
+    
+    val_steps = (corpus_val.corpus_size() + val_batch_size - 1) // val_batch_size
+    
     try:
         model.fit_generator(
             generator=corpus_generator,
             steps_per_epoch=corpus.steps_per_epoch(),
-            validation_data=corpus_val.no_batch(),
+            validation_data=validation_generator(),
+            validation_steps=val_steps,
             epochs=num_epochs,
             callbacks=callbacks,
             initial_epoch=initial_epoch,
