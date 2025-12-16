@@ -41,34 +41,102 @@ from translit_lib.encoder_decoder import EncoderDecoderBidiSegmentation
 from keras.callbacks import ModelCheckpoint, Callback, EarlyStopping
 
 
-def calculate_max_unicode_code(target_file):
+class CharacterVocabulary:
     """
-    Calculate the maximum Unicode code point in the target file.
-    Returns the max code point with a small buffer.
+    A vocabulary for target characters that only includes characters actually used in the data.
+    Similar to Vocabulary but for characters instead of words.
     """
-    max_code = 0
-    with open(target_file, 'r', encoding='utf-8') as f:
-        for line in f:
-            for char in line:
-                code = ord(char)
-                if code > max_code:
-                    max_code = code
-    buffer = 100
-    return max_code + buffer
+    def __init__(self):
+        self.MASK = 0
+        self.BOS = 1
+        self.EOS = 2
+        self.UNKNOWN = 3
+        
+        self._char2idx = {}
+        self._idx2char = {}
+        self._record_reserved(self.MASK, '<MASK>')
+        self._record_reserved(self.BOS, '<BOS>')
+        self._record_reserved(self.EOS, '<EOS>')
+        self._record_reserved(self.UNKNOWN, '<UNKNOWN>')
+        self.last_index = 3
+    
+    def _record_reserved(self, index, char):
+        self._char2idx[char] = index
+        self._idx2char[index] = char
+    
+    def add_char(self, char):
+        if char not in self._char2idx:
+            self.last_index += 1
+            self._char2idx[char] = self.last_index
+            self._idx2char[self.last_index] = char
+        return self._char2idx[char]
+    
+    def get_index(self, char):
+        return self._char2idx.get(char, self.UNKNOWN)
+    
+    def get_char(self, index):
+        return self._idx2char.get(index, '<UNKNOWN>')
+    
+    def size(self):
+        return self.last_index + 1
+    
+    def build_from_file(self, file_name, space_separated=True):
+        """
+        Build vocabulary from target file, collecting all unique characters.
+        """
+        chars = set()
+        with open(file_name, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip('\n\r\t ')
+                if space_separated:
+                    for char in line.split(' '):
+                        if char:
+                            chars.add(char)
+                else:
+                    for char in line:
+                        chars.add(char)
+        
+        for char in sorted(chars):
+            self.add_char(char)
+        
+        return len(chars)
 
 
-def patch_corpus_utils_for_unicode(max_code):
+def build_character_vocabulary(target_file):
     """
-    Monkey-patch the corpus_utils module to use a higher max_code for Unicode support.
+    Build a character vocabulary from the target file.
+    Returns the vocabulary and its size.
+    """
+    vocab = CharacterVocabulary()
+    num_chars = vocab.build_from_file(target_file, space_separated=True)
+    vocab_size = vocab.size()
+    print(f"Built character vocabulary: {num_chars} unique characters, vocabulary size: {vocab_size}")
+    return vocab, vocab_size
+
+
+def patch_corpus_utils_for_character_vocab(char_vocab, vocab_size):
+    """
+    Monkey-patch the corpus_utils module to use a custom character vocabulary instead of Unicode code points.
     """
     import translit_lib.corpus_utils as corpus_utils
     
     original_load_character_corpus = corpus_utils._load_character_corpus
     
     def patched_load_character_corpus(file_name, max_code_param=None, space_separated=True):
-        if max_code_param is None:
-            max_code_param = max_code
-        return original_load_character_corpus(file_name, max_code=max_code_param, space_separated=space_separated)
+        """
+        Load character corpus using custom character vocabulary instead of Unicode codes.
+        """
+        res = []
+        with open(file_name, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip("\n\r\t ")
+                if space_separated:
+                    chars = [c for c in line.split(" ") if c]
+                else:
+                    chars = list(line)
+                codes = [char_vocab.BOS] + [char_vocab.get_index(c) for c in chars] + [char_vocab.EOS]
+                res.append(codes)
+        return res
     
     corpus_utils._load_character_corpus = patched_load_character_corpus
     
@@ -76,7 +144,7 @@ def patch_corpus_utils_for_unicode(max_code):
     
     def patched_encode_segmented_corpus(encoded_inputs, encoded_outputs, segmentation, num_input_classes, num_output_classes):
         if num_output_classes == 256:
-            num_output_classes = max_code + 1
+            num_output_classes = vocab_size
         return original_encode_segmented_corpus(encoded_inputs, encoded_outputs, segmentation, num_input_classes, num_output_classes)
     
     corpus_utils._encode_segmented_corpus = patched_encode_segmented_corpus
@@ -89,7 +157,7 @@ def patch_corpus_utils_for_unicode(max_code):
         list_out = self._load_target_corpus()
         return corpus_utils._encode_segmented_corpus(
             list_in, list_out, segment_out,
-            self.vocabulary().size(), max_code + 1
+            self.vocabulary().size(), vocab_size
         )
     
     CorpusSegmentation.no_batch = patched_no_batch
@@ -117,7 +185,7 @@ def patch_corpus_utils_for_unicode(max_code):
                     res = corpus_utils._encode_segmented_corpus(
                         batch_in, batch_out, batch_out_seg,
                         self.vocabulary().size(), 
-                        max_code + 1
+                        vocab_size
                     )
                     yield res
                 if epochs is not None and epoch_count >= epochs:
@@ -163,16 +231,14 @@ def train_model(src_train, tgt_train, src_val, tgt_val, output_model, batch_size
         print(f"Error: Target validation file not found: {tgt_val}", file=sys.stderr)
         sys.exit(1)
 
-    print("Calculating maximum Unicode code point from target file...")
-    max_code = calculate_max_unicode_code(tgt_train)
-    print(f"Maximum Unicode code point: {max_code} (U+{max_code:04X})")
-    print(f"Using max_code={max_code} for Unicode support (default was 255)")
+    print("Building character vocabulary from target file...")
+    char_vocab, vocab_size = build_character_vocabulary(tgt_train)
     
-    print("Patching corpus_utils for Unicode support...")
-    patch_corpus_utils_for_unicode(max_code)
+    print("Patching corpus_utils for character vocabulary support...")
+    patch_corpus_utils_for_character_vocab(char_vocab, vocab_size)
     
-    decoder_output_size = max_code + 1
-    print(f"Decoder output size: {decoder_output_size} (supports Unicode codes 0-{max_code})")
+    decoder_output_size = vocab_size
+    print(f"Decoder output size: {decoder_output_size} (custom character vocabulary)")
 
     corpus = CorpusSegmentation(vocabulary=vocabulary, src=src_train, tgt=tgt_train, batch_size=batch_size)
     corpus_val = CorpusSegmentation(vocabulary=vocabulary, src=src_val, tgt=tgt_val, batch_size=batch_size)
@@ -280,7 +346,7 @@ def train_model(src_train, tgt_train, src_val, tgt_val, output_model, batch_size
             batch_out_seg = extract(seg_out, batch_indexes)
             res = corpus_utils._encode_segmented_corpus(
                 batch_in, batch_out, batch_out_seg,
-                corpus_val.vocabulary().size(), max_code + 1
+                corpus_val.vocabulary().size(), vocab_size
             )
             yield res
     
