@@ -16,9 +16,10 @@ conda activate ramses-trl-GPU
 cd /mnt/lustre/helios-home/morovkat/ramses-trl_additional_processing
 
 python train_model.py \
-    --src-train /mnt/lustre/helios-home/morovkat/hiero-transformer/training_data/source_egy2tnt_cleaned.txt \
-    --tgt-train /mnt/lustre/helios-home/morovkat/hiero-transformer/training_data/target_egy2tnt_cleaned.txt \
+    --src-train /mnt/lustre/helios-home/morovkat/hiero-transformer/training_data_ramses/source_egy2tnt_cleaned.txt \
+    --tgt-train /mnt/lustre/helios-home/morovkat/hiero-transformer/training_data_ramses/target_egy2tnt_cleaned.txt \
     --src-val /mnt/lustre/helios-home/morovkat/hiero-transformer/test_and_validation_data/validation_source_egy2tnt_cleaned.txt \
     --tgt-val /mnt/lustre/helios-home/morovkat/hiero-transformer/test_and_validation_data/validation_target_egy2tnt_cleaned.txt \
     --output /mnt/lustre/helios-home/morovkat/ramses-trl_additional_processing/network_UNICODE/hiero_transformer.h5
+
 
