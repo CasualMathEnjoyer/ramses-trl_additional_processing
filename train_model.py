@@ -129,7 +129,7 @@ def patch_corpus_utils_for_unicode(max_code):
     CorpusSegmentation.generator = patched_generator
 
 
-def train_model(src_train, tgt_train, src_val, tgt_val, output_model):
+def train_model(src_train, tgt_train, src_val, tgt_val, output_model, batch_size=None):
     """
     Train a bidirectional segmentation model.
     
@@ -139,9 +139,11 @@ def train_model(src_train, tgt_train, src_val, tgt_val, output_model):
         src_val: Path to source validation file (with separations, e.g., src-sep-val.txt)
         tgt_val: Path to target validation file (e.g., tgt-val.txt)
         output_model: Path pattern for output model file (can include {epoch}, {val_softmax_acc}, {val_softmax_loss})
+        batch_size: Batch size for training (default: 4, reduced for Unicode support with large vocabulary)
     """
     hidden = 500
-    batch_size = 16
+    if batch_size is None:
+        batch_size = 8
     num_epochs = 200
     period = 20
     
@@ -324,6 +326,8 @@ def main():
                        help="Path to target validation file (e.g., tgt-val.txt)")
     parser.add_argument("--output", required=True, 
                        help="Path pattern for output model file (can include {epoch}, {val_softmax_acc}, {val_softmax_loss})")
+    parser.add_argument("--batch-size", type=int, default=None,
+                       help="Batch size for training (default: 8, reduced for Unicode support with large vocabulary)")
 
     args = parser.parse_args()
 
@@ -332,7 +336,8 @@ def main():
         tgt_train=args.tgt_train,
         src_val=args.src_val,
         tgt_val=args.tgt_val,
-        output_model=args.output
+        output_model=args.output,
+        batch_size=args.batch_size
     )
 
 
