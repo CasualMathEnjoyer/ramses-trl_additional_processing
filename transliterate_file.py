@@ -26,11 +26,22 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'ramses-trl', 'python
 from translit_lib.vocabulary import Vocabulary
 from translit_lib.encoder_decoder import Encoder, Decoder, BidiEncoder, Transliterator
 
+# Import CharacterVocabulary from train_model
+sys.path.insert(0, os.path.dirname(__file__))
+from train_model import CharacterVocabulary, build_character_vocabulary
 
-def build_transliterator(net, hidden=500, arch="bidiseg"):
+
+def build_transliterator(net, hidden=500, arch="bidiseg", decoder_input_size=256, decoder_char_vocab=None):
     """
     Initialise vocabulary and encoder/decoder ONCE.
     Loads model from network.h5.
+    
+    Args:
+        net: Path to model file
+        hidden: Hidden layer size
+        arch: Architecture type ("bidiseg", "bidi", "seg", "plain")
+        decoder_input_size: Size of decoder input/output vocabulary (default 256, but may be different for Unicode models)
+        decoder_char_vocab: CharacterVocabulary object for decoding output indices to characters (None for default Unicode mapping)
     """
 
     vocabulary = Vocabulary()
@@ -42,14 +53,14 @@ def build_transliterator(net, hidden=500, arch="bidiseg"):
         encoder = BidiEncoder(input_size=vocabulary.size(), hidden=hidden)
         encoder_model = encoder.load_model_from_file(net)
 
-        decoder = Decoder(hidden=hidden)
+        decoder = Decoder(hidden=hidden, decoder_input_size=decoder_input_size)
         decoder_model = decoder.load_model_from_file(net, attention_output=attention_output)
 
     elif arch in ("seg", "plain"):
         encoder = Encoder(input_size=vocabulary.size(), hidden=hidden)
         encoder_model = encoder.load_model_from_file(net)
 
-        decoder = Decoder(hidden=hidden)
+        decoder = Decoder(hidden=hidden, decoder_input_size=decoder_input_size)
         decoder_model = decoder.load_model_from_file(net)
 
     else:
@@ -59,7 +70,9 @@ def build_transliterator(net, hidden=500, arch="bidiseg"):
         vocabulary,
         encoder_model,
         decoder_model,
-        attention_output=attention_output
+        attention_output=attention_output,
+        decoder_vocab_size=decoder_input_size,
+        decoder_char_vocab=decoder_char_vocab
     )
 
     return transliterator
@@ -83,9 +96,21 @@ def create_unicode_mapping(target_file):
 
 
 def batch_transliterate(net, input_path, output_path,
-                        arch="bidiseg", hidden=500, beam=1, compact=False, target_file=None):
+                        arch="bidiseg", hidden=500, beam=1, compact=False, target_file=None, decoder_input_size=256, target_train_file=None):
 
-    transliterator = build_transliterator(net, hidden=hidden, arch=arch)
+    decoder_char_vocab = None
+    if target_train_file and os.path.exists(target_train_file):
+        print(f"Building character vocabulary from target training file: {target_train_file}")
+        decoder_char_vocab, vocab_size = build_character_vocabulary(target_train_file)
+        if vocab_size != decoder_input_size:
+            print(f"Warning: Vocabulary size from file ({vocab_size}) doesn't match --decoder-input-size ({decoder_input_size})")
+            print(f"Using vocabulary size from file: {vocab_size}")
+            decoder_input_size = vocab_size
+    elif decoder_input_size != 256:
+        print(f"Warning: Using custom decoder_input_size ({decoder_input_size}) but no target training file provided.")
+        print("Output will use chr() mapping which may not match the training vocabulary.")
+
+    transliterator = build_transliterator(net, hidden=hidden, arch=arch, decoder_input_size=decoder_input_size, decoder_char_vocab=decoder_char_vocab)
     
     unicode_chars = set()
     if target_file and os.path.exists(target_file):
@@ -99,10 +124,13 @@ def batch_transliterate(net, input_path, output_path,
     with open(input_path, "r", encoding="utf-8") as infile, \
          open(output_path, "w", encoding="utf-8") as outfile:
 
+        lines_written = 0
         for line in infile:
             line = line.strip()
             if not line:
-                outfile.write("\n")
+                if lines_written > 0:
+                    outfile.write("\n")
+                lines_written += 1
                 continue
 
             tr = transliterator.transliterate(line, beam_width=beam)
@@ -114,7 +142,10 @@ def batch_transliterate(net, input_path, output_path,
             if not compact:
                 tr = " ".join(tr.replace(" ", "_"))
 
-            outfile.write(tr + "\n")
+            if lines_written > 0:
+                outfile.write("\n")
+            outfile.write(tr)
+            lines_written += 1
             print(tr)
 
 
@@ -128,6 +159,10 @@ def main():
     parser.add_argument("--beam", type=int, default=1, help="Beam width")
     parser.add_argument("--compact", action="store_true", help="Do not space-separate characters")
     parser.add_argument("--target-file", help="Target training file to create Unicode mapping (for fixing code 3 -> Unicode chars)")
+    parser.add_argument("--decoder-input-size", type=int, default=256, 
+                       help="Decoder input/output vocabulary size (default 256, use 77 for Unicode models trained with custom character vocabulary)")
+    parser.add_argument("--target-train-file", 
+                       help="Target training file used during training (to rebuild character vocabulary for proper decoding)")
 
     args = parser.parse_args()
 
@@ -140,6 +175,8 @@ def main():
         beam=args.beam,
         compact=args.compact,
         target_file=args.target_file,
+        decoder_input_size=args.decoder_input_size,
+        target_train_file=args.target_train_file,
     )
 
 
