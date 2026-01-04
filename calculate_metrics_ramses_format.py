@@ -151,10 +151,11 @@ def calculate_gold(predictions, targets):
 
 def calculate_rouge_and_bleu(predictions, targets):
     """
-    Calculate ROUGE-L and SacreBLEU metrics.
-    Matches the implementation from new_metrics_rosmorduc.py:
-    - Replace underscores with spaces (underscores are word separators in RAMSES)
-    - Strip punctuation, lowercase, then split into tokens
+    Calculate ROUGE-L and SacreBLEU metrics at token level (word level).
+    Matches the implementation from inference_local_model.py:
+    - Converts character-separated format to word-level format
+    - Removes spaces between characters, replaces underscores with spaces
+    - Then normalizes: strip punctuation, lowercase, split into tokens
     """
     if len(predictions) == 0:
         return None, None
@@ -163,35 +164,41 @@ def calculate_rouge_and_bleu(predictions, targets):
     rouge_metric = load_metric("rouge")
     sacrebleu_metric = load_metric("sacrebleu")
     
-    # Process and add batches - matching reference implementation
+    # Process and add batches - convert to word-level format then normalize
     for pred, tgt in zip(predictions, targets):
-        # In RAMSES, underscores separate words, so replace with spaces first
-        # Then normalize: strip punctuation, lowercase, split
-        pred_normalized = pred.replace("_", " ").strip(string.punctuation).lower()
-        tgt_normalized = tgt.replace("_", " ").strip(string.punctuation).lower()
+        # Step 1: Remove spaces between characters to get word-level format
+        # "x a a _ = k _ a n x" -> "xaa_=k_anx"
+        pred_words = pred.replace(" ", "")
+        tgt_words = tgt.replace(" ", "")
         
-        pred_tokens = pred_normalized.split()
-        tgt_tokens = tgt_normalized.split()
+        # Step 2: Replace underscores with spaces
+        # "xaa_=k_anx" -> "xaa =k anx"
+        pred_words = pred_words.replace("_", " ")
+        tgt_words = tgt_words.replace("_", " ")
         
-        # Join tokens back to strings (evaluate library expects strings)
-        pred_str = " ".join(pred_tokens)
-        tgt_str = " ".join(tgt_tokens)
+        # Step 3: Normalize same way as inference_local_model.py
+        # Strip punctuation, lowercase, split into tokens
+        pred_tokens = pred_words.strip(string.punctuation).lower().split()
+        tgt_tokens = tgt_words.strip(string.punctuation).lower().split()
         
+        # Pass tokenized lists directly (matching inference_local_model.py)
+        # datasets library accepts both lists and strings, but lists give different results
         sacrebleu_metric.add_batch(
-            predictions=[pred_str],
-            references=[[tgt_str]]
+            predictions=[pred_tokens],
+            references=[[tgt_tokens]]
         )
         
+        # ROUGE also accepts tokenized lists
         rouge_metric.add_batch(
-            predictions=[pred_str],
-            references=[[tgt_str]]
+            predictions=[pred_tokens],
+            references=[[tgt_tokens]]
         )
     
     # Compute metrics
     rouge_result = rouge_metric.compute()
     sacrebleu_result = sacrebleu_metric.compute()
     
-    # Extract scores - handle both evaluate and datasets library formats
+    # Extract scores
     sacrebleu = sacrebleu_result["score"]
     
     rougeL_value = rouge_result["rougeL"]
@@ -235,16 +242,28 @@ def main():
         print(f"Error: Target file not found: {args.target}", file=sys.stderr)
         sys.exit(1)
     
-    # Load files
+    # Load files - preserve empty lines to maintain alignment
     with open(args.prediction, "r", encoding="utf-8") as f:
-        preds = [line.strip() for line in f if line.strip()]
+        preds = [line.rstrip('\n') for line in f]
     
     with open(args.target, "r", encoding="utf-8") as f:
-        refs = [line.strip() for line in f if line.strip()]
+        refs = [line.rstrip('\n') for line in f]
+    
+    # Filter out pairs where prediction is empty (to match inference script behavior)
+    # But maintain alignment by keeping track of which lines were filtered
+    filtered_preds = []
+    filtered_refs = []
+    for pred, ref in zip(preds, refs):
+        if pred.strip():  # Only include non-empty predictions
+            filtered_preds.append(pred)
+            filtered_refs.append(ref)
+    
+    preds = filtered_preds
+    refs = filtered_refs
     
     # Sanity check
     if len(preds) != len(refs):
-        print(f"Warning: Line count mismatch: {len(preds)} predictions vs {len(refs)} references", file=sys.stderr)
+        print(f"Warning: Line count mismatch after filtering: {len(preds)} predictions vs {len(refs)} references", file=sys.stderr)
         # Use minimum length
         min_len = min(len(preds), len(refs))
         preds = preds[:min_len]
