@@ -1,0 +1,68 @@
+diff --git a/python/translit_lib/encoder_decoder.py b/python/translit_lib/encoder_decoder.py
+index be89951..d62f37e 100644
+--- a/python/translit_lib/encoder_decoder.py
++++ b/python/translit_lib/encoder_decoder.py
+@@ -642,7 +642,7 @@ class Transliterator:
+     The rest of the data produced will be accessible from getters.
+     """
+ 
+-    def __init__(self, vocabulary, encoder_model, decoder_model,attention_output=False):
++    def __init__(self, vocabulary, encoder_model, decoder_model, attention_output=False, decoder_vocab_size=256, decoder_char_vocab=None):
+         """
+         Create a transliterator.
+         Note that both the encoder and the decoder are keras models. If you want to use
+@@ -651,6 +651,8 @@ class Transliterator:
+         - encoder_model : a model object for the encoder ; typically loaded from a h5 file
+         - decoder_model : a model object for the encoder ; typically loaded from a h5 file
+         - attention_output : does the decode output includes a last value which is the attention ?
++        - decoder_vocab_size : size of decoder vocabulary (default 256, but may be different for Unicode models)
++        - decoder_char_vocab : CharacterVocabulary object for mapping decoder output indices to characters (None uses chr() for Unicode)
+         Nota: this is a redundancy which might be avoided if we passed encoder and decoder objets and not simple keras 
+             models.
+         """
+@@ -659,6 +661,8 @@ class Transliterator:
+         self.encoder_model = encoder_model
+         self.decoder_model = decoder_model
+         self.attention_output = attention_output
++        self.decoder_vocab_size = decoder_vocab_size
++        self.decoder_char_vocab = decoder_char_vocab
+     
+     def get_beams(self):
+         """
+@@ -726,7 +730,7 @@ class Transliterator:
+                     previous_attention = node.attention
+                     has_opened_node = True # There was an opened node, search is not finished
+                     # Compute next state :
+-                    encoded_output = computeRepresentation([[node.last_char]])
++                    encoded_output = computeRepresentation([[node.last_char]], num_classes=self.decoder_vocab_size)
+                     decoder_input = [encoded_output, hs1_out, *(node.states())]
+                     prediction = self.decoder_model.predict(decoder_input)
+                     if self.attention_output:
+@@ -747,7 +751,12 @@ class Transliterator:
+         # Keep best beams if we want to see them.
+         self.beams = []
+         for (cost, node) in parent_beam.values():
+-                translit = "".join(([chr(c) for c in node.text]))[1:-1].replace("_", " ")
++                # Filter out BOS (1) and EOS (2) tokens
++                filtered_text = [c for c in node.text if c != 1 and c != 2]
++                if self.decoder_char_vocab:
++                    translit = "".join([self.decoder_char_vocab.get_char(c) for c in filtered_text]).replace("_", " ")
++                else:
++                    translit = "".join([chr(c) for c in filtered_text]).replace("_", " ")
+                 self.beams.append(translit)
+         
+         # Store last attention results.
+@@ -757,7 +766,12 @@ class Transliterator:
+             self._attention = None
+ 
+         output_list = parent_beam.best_node().text
+-        res = "".join(([chr(c) for c in output_list]))[1:-1].replace("_", " ")
++        # Filter out BOS (1) and EOS (2) tokens
++        filtered_output = [c for c in output_list if c != 1 and c != 2]
++        if self.decoder_char_vocab:
++            res = "".join([self.decoder_char_vocab.get_char(c) for c in filtered_output]).replace("_", " ")
++        else:
++            res = "".join([chr(c) for c in filtered_output]).replace("_", " ")
+         self._best_output = parent_beam.best_node().text
+         return res
+ 
