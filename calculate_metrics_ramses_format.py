@@ -249,6 +249,13 @@ def main():
     with open(args.target, "r", encoding="utf-8") as f:
         refs = [line.rstrip('\n') for line in f]
     
+    # Check that line counts match
+    if len(preds) != len(refs):
+        print(f"Error: Line count mismatch: {len(preds)} predictions vs {len(refs)} references", file=sys.stderr)
+        print(f"  Prediction file: {args.prediction}", file=sys.stderr)
+        print(f"  Target file: {args.target}", file=sys.stderr)
+        sys.exit(1)
+    
     # Filter out pairs where prediction is empty (to match inference script behavior)
     # But maintain alignment by keeping track of which lines were filtered
     filtered_preds = []
@@ -261,14 +268,10 @@ def main():
     preds = filtered_preds
     refs = filtered_refs
     
-    # Sanity check
+    # Sanity check after filtering
     if len(preds) != len(refs):
-        print(f"Warning: Line count mismatch after filtering: {len(preds)} predictions vs {len(refs)} references", file=sys.stderr)
-        # Use minimum length
-        min_len = min(len(preds), len(refs))
-        preds = preds[:min_len]
-        refs = refs[:min_len]
-        print(f"Using first {min_len} lines from both files", file=sys.stderr)
+        print(f"Error: Line count mismatch after filtering: {len(preds)} predictions vs {len(refs)} references", file=sys.stderr)
+        sys.exit(1)
     
     # Metadata
     sentence_count = len(preds)
